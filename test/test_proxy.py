@@ -9,6 +9,8 @@ from libpathod import test
 from netlib import http, tcp
 import mock
 
+from OpenSSL import SSL
+
 
 def test_proxy_error():
     p = ProxyError(111, "msg")
@@ -78,7 +80,6 @@ class TestProcessProxyOptions:
     def test_no_transparent(self):
         self.assert_err("transparent mode not supported", "-T")
 
-
     @mock.patch("libmproxy.platform.resolver")
     def test_modes(self, _):
         self.assert_noerr("-R", "http://localhost")
@@ -91,33 +92,67 @@ class TestProcessProxyOptions:
         self.assert_err("expected one argument", "-U")
         self.assert_err("Invalid server specification", "-U", "upstream")
 
+        self.assert_noerr("--spoof")
+        self.assert_noerr("--ssl-spoof")
+
+        self.assert_noerr("--spoofed-port", "443")
+        self.assert_err("expected one argument", "--spoofed-port")
+
         self.assert_err("mutually exclusive", "-R", "http://localhost", "-T")
 
     def test_client_certs(self):
         with tutils.tmpdir() as cadir:
             self.assert_noerr("--client-certs", cadir)
-            self.assert_err("directory does not exist", "--client-certs", "nonexistent")
+            self.assert_err(
+                "directory does not exist",
+                "--client-certs",
+                "nonexistent")
 
     def test_certs(self):
         with tutils.tmpdir() as cadir:
-            self.assert_noerr("--cert", tutils.test_data.path("data/testkey.pem"))
+            self.assert_noerr(
+                "--cert",
+                tutils.test_data.path("data/testkey.pem"))
             self.assert_err("does not exist", "--cert", "nonexistent")
 
     def test_auth(self):
         p = self.assert_noerr("--nonanonymous")
         assert p.authenticator
 
-        p = self.assert_noerr("--htpasswd", tutils.test_data.path("data/htpasswd"))
+        p = self.assert_noerr(
+            "--htpasswd",
+            tutils.test_data.path("data/htpasswd"))
         assert p.authenticator
-        self.assert_err("malformed htpasswd file", "--htpasswd", tutils.test_data.path("data/htpasswd.invalid"))
+        self.assert_err(
+            "malformed htpasswd file",
+            "--htpasswd",
+            tutils.test_data.path("data/htpasswd.invalid"))
 
         p = self.assert_noerr("--singleuser", "test:test")
         assert p.authenticator
-        self.assert_err("invalid single-user specification", "--singleuser", "test")
+        self.assert_err(
+            "invalid single-user specification",
+            "--singleuser",
+            "test")
+
+    def test_verify_upstream_cert(self):
+        p = self.assert_noerr("--verify-upstream-cert")
+        assert p.openssl_verification_mode_server == SSL.VERIFY_PEER
+
+    def test_upstream_trusted_cadir(self):
+        expected_dir = "/path/to/a/ca/dir"
+        p = self.assert_noerr("--upstream-trusted-cadir", expected_dir)
+        assert p.openssl_trusted_cadir_server == expected_dir
+
+    def test_upstream_trusted_ca(self):
+        expected_file = "/path/to/a/cert/file"
+        p = self.assert_noerr("--upstream-trusted-ca", expected_file)
+        assert p.openssl_trusted_ca_server == expected_file
 
 
 class TestProxyServer:
-    @tutils.SkipWindows  # binding to 0.0.0.0:1 works without special permissions on Windows
+    # binding to 0.0.0.0:1 works without special permissions on Windows
+    @tutils.SkipWindows
     def test_err(self):
         conf = ProxyConfig(
             port=1
@@ -142,6 +177,12 @@ class TestConnectionHandler:
     def test_fatal_error(self):
         config = mock.Mock()
         config.mode.get_upstream_server.side_effect = RuntimeError
-        c = ConnectionHandler(config, mock.MagicMock(), ("127.0.0.1", 8080), None, mock.MagicMock())
+        c = ConnectionHandler(
+            config,
+            mock.MagicMock(),
+            ("127.0.0.1",
+             8080),
+            None,
+            mock.MagicMock())
         with tutils.capture_stderr(c.handle) as output:
             assert "mitmproxy has crashed" in output
