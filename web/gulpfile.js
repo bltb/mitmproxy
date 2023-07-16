@@ -1,262 +1,138 @@
-var path = require('path');
+const gulp = require("gulp");
+const gulpEsbuild = require("gulp-esbuild");
+const less = require("gulp-less");
+const livereload = require("gulp-livereload");
+const cleanCSS = require("gulp-clean-css");
+const notify = require("gulp-notify");
+const compilePeg = require("gulp-peg");
+const plumber = require("gulp-plumber");
+const replace = require("gulp-replace");
+const sourcemaps = require("gulp-sourcemaps");
+const through = require("through2");
 
-var packagejs = require('./package.json');
-var conf = require('./conf.js');
+const noop = () => through.obj();
 
-// Sorted alphabetically!
-var browserify = require('browserify');
-var gulp = require("gulp");
-var concat = require('gulp-concat');
-var connect = require('gulp-connect');
-var jshint = require("gulp-jshint");
-var less = require("gulp-less");
-var livereload = require("gulp-livereload");
-var minifyCSS = require('gulp-minify-css');
-var notify = require("gulp-notify");
-var peg = require("gulp-peg");
-var plumber = require("gulp-plumber");
-var react = require("gulp-react");
-var rename = require("gulp-rename");
-var replace = require('gulp-replace');
-var rev = require("gulp-rev");
-var sourcemaps = require('gulp-sourcemaps');
-var uglify = require('gulp-uglify');
-var _ = require('lodash');
-var map = require("map-stream");
-var reactify = require('reactify');
-var buffer = require('vinyl-buffer');
-var source = require('vinyl-source-stream');
-var transform = require('vinyl-transform');
-
-// FIXME: react-with-addons.min.js for prod use issue
-// FIXME: Sourcemap URLs don't work correctly.
-// FIXME: Why don't we use gulp-rev's manifest feature?
-
-var manifest = {
-    "vendor.css": "vendor.css",
-    "app.css": "app.css",
-    "vendor.js": "vendor.js",
-    "app.js": "app.js",
+var handleError = {
+    errorHandler: notify.onError("Error: <%= error.message %>"),
 };
 
-var vendor_packages = _.difference(
-    _.union(
-        _.keys(packagejs.dependencies),
-        conf.js.vendor_includes
-    ),
-    conf.js.vendor_excludes
-);
-
-
-// Custom linting reporter used for error notify
-var jsHintErrorReporter = function(){
-    return map(function (file, cb) {
-        if (file.jshint && !file.jshint.success) {
-            file.jshint.results.forEach(function (err) {
-                if (err) {
-                    var msg = [
-                        path.basename(file.path),
-                        'Line: ' + err.error.line,
-                        'Reason: ' + err.error.reason
-                    ];
-                    notify.onError(
-                        "Error: <%= error.message %>"
-                    )(new Error(msg.join("\n")));
-                }
-            });
-        }
-        cb(null, file);
-    })
-};
-
-var save_rev = function(){
-    return map(function(file, callback){
-        if (file.revOrigBase){
-            manifest[path.basename(file.revOrigPath)] = path.basename(file.path);
-        }
-        callback(null, file);
-    })
-}
-
-var dont_break_on_errors = function(){
-    return plumber(
-        function(error){
-            notify.onError("Error: <%= error.message %>").apply(this, arguments);
-            this.emit('end');
-        }
-    );
-};
-
-gulp.task("fonts", function () {
-    return gulp.src(conf.fonts)
-        .pipe(gulp.dest(conf.static + "/fonts"))
-});
-
-function styles_dev(files) {
-    return (gulp.src(files)
-        .pipe(dont_break_on_errors())
+function styles(files, dev) {
+    return gulp
+        .src(files)
+        .pipe(dev ? plumber(handleError) : noop())
         .pipe(sourcemaps.init())
         .pipe(less())
-        .pipe(sourcemaps.write(".", {sourceRoot: "/static"}))
-        .pipe(gulp.dest(conf.static))
-        .pipe(livereload({ auto: false })));
-}
-gulp.task("styles-app-dev", function(){
-    styles_dev(conf.css.app);
-});
-gulp.task("styles-vendor-dev", function(){
-    styles_dev(conf.css.vendor);
-});
-
-
-function styles_prod(files) {
-    return (gulp.src(files)
-        .pipe(sourcemaps.init())
-        .pipe(less())
-        .pipe(minifyCSS())
-        .pipe(rev())
-        .pipe(sourcemaps.write(".", {sourceRoot: "/static"}))
-        .pipe(save_rev())
-        .pipe(gulp.dest(conf.static))
-        .pipe(livereload({ auto: false })));
-}
-gulp.task("styles-app-prod", function(){
-    styles_prod(conf.css.app);
-});
-gulp.task("styles-vendor-prod", function(){
-    styles_prod(conf.css.vendor);
-});
-
-
-function vendor_stream(debug){
-    var vendor = browserify(vendor_packages, {debug: debug});
-    _.each(vendor_packages, function(v){
-        vendor.require(v);
-    });
-    return vendor.bundle()
-        .pipe(source("dummy.js"))
-        .pipe(rename("vendor.js"));
-}
-gulp.task("scripts-vendor-dev", function (){
-    return vendor_stream(true)
-        .pipe(gulp.dest(conf.static));
-});
-gulp.task("scripts-vendor-prod", function(){
-    return vendor_stream(false)
-        .pipe(buffer())
-        .pipe(uglify())
-        .pipe(rev())
-        .pipe(save_rev())
-        .pipe(gulp.dest(conf.static));
-});
-
-
-function app_stream(debug) {
-    var browserified = transform(function(filename) {
-        var b = browserify(filename, {debug: debug});
-        _.each(vendor_packages, function(v){
-            b.external(v);
-        });
-        b.transform(reactify);
-        return b.bundle();
-    });
-
-    return gulp.src([conf.js.app])
-        .pipe(dont_break_on_errors())
-        .pipe(browserified)
-        .pipe(sourcemaps.init({ loadMaps: true }))
-        .pipe(rename("app.js"));
-}
-
-gulp.task('scripts-app-dev', function () {
-    return app_stream(true)
-        .pipe(sourcemaps.write('./'))
-        .pipe(gulp.dest(conf.static))
+        .pipe(dev ? noop() : cleanCSS())
+        .pipe(sourcemaps.write(".", { sourceRoot: "/src/css" }))
+        .pipe(gulp.dest("../mitmproxy/tools/web/static"))
         .pipe(livereload({ auto: false }));
-});
+}
 
-gulp.task('scripts-app-prod', function () {
-    return app_stream(true)
-        .pipe(buffer())
-        .pipe(uglify())
-        .pipe(rev())
-        .pipe(sourcemaps.write('./'))
-        .pipe(save_rev())
-        .pipe(gulp.dest(conf.static));
-});
+function styles_vendor_prod() {
+    return styles("src/css/vendor.less", false);
+}
 
+function styles_vendor_dev() {
+    return styles("src/css/vendor.less", true);
+}
 
-gulp.task("jshint", function () {
-    return gulp.src(conf.js.jshint)
-        .pipe(dont_break_on_errors())
-        .pipe(react())
-        .pipe(jshint())
-        .pipe(jshint.reporter("jshint-stylish"))
-        .pipe(jsHintErrorReporter());
-});
+function styles_app_prod() {
+    return styles("src/css/app.less", false);
+}
 
-gulp.task("copy", function(){
-    return gulp.src(conf.copy, {base:"src/"})
-        .pipe(gulp.dest(conf.static));
-});
+function styles_app_dev() {
+    return styles("src/css/app.less", true);
+}
 
-function templates(){
-    return gulp.src(conf.templates, {base:"src/"})
-        .pipe(replace(/\{\{\{(\S*)\}\}\}/g, function(match, p1) {
-            return manifest[p1];
-        }))
-        .pipe(gulp.dest(conf.dist));
-};
-gulp.task('templates', templates);
+function esbuild(dev) {
+    return gulp
+        .src("src/js/app.tsx")
+        .pipe(
+            gulpEsbuild({
+                outfile: "app.js",
+                sourcemap: true,
+                sourceRoot: "/",
+                minify: !dev,
+                keepNames: true,
+                bundle: true,
+            })
+        )
+        .pipe(gulp.dest("../mitmproxy/tools/web/static"))
+        .pipe(livereload({ auto: false }));
+}
 
-gulp.task("peg", function () {
-    return gulp.src(conf.peg, {base: "src/"})
-        .pipe(dont_break_on_errors())
-        .pipe(peg())
+function scripts_dev() {
+    return esbuild(true);
+}
+
+function scripts_prod() {
+    return esbuild(false);
+}
+
+const copy_src = [
+    "src/images/**",
+    "src/fonts/fontawesome-webfont.*",
+    "!**/*.psd",
+];
+
+function copy() {
+    return gulp
+        .src(copy_src, { base: "src/" })
+        .pipe(gulp.dest("../mitmproxy/tools/web/static"));
+}
+
+const template_src = "src/templates/*";
+
+function templates() {
+    return gulp
+        .src(template_src, { base: "src/" })
+        .pipe(gulp.dest("../mitmproxy/tools/web"));
+}
+
+const peg_src = "src/js/filt/*.peg";
+
+function peg() {
+    return gulp
+        .src(peg_src, { base: "src/" })
+        .pipe(plumber(handleError))
+        .pipe(compilePeg())
+        .pipe(
+            replace(
+                "module.exports = ",
+                'import * as flowutils from "../flow/utils"\n' +
+                    "export default "
+            )
+        )
         .pipe(gulp.dest("src/"));
-});
+}
 
-gulp.task('connect', function() {
-    if(conf.connect){
-        connect.server({
-            port: conf.connect.port
-        });
-    }
-});
-
-gulp.task(
-    "dev",
-    [
-        "fonts",
-        "copy",
-        "styles-vendor-dev",
-        "styles-app-dev",
-        "scripts-vendor-dev",
-        "peg",
-        "scripts-app-dev",
-    ],
-    templates
-);
-gulp.task(
-    "prod",
-    [
-        "fonts",
-        "copy",
-        "styles-vendor-prod",
-        "styles-app-prod",
-        "scripts-vendor-prod",
-        "peg",
-        "scripts-app-prod",
-    ],
+const dev = gulp.parallel(
+    copy,
+    styles_vendor_dev,
+    styles_app_dev,
+    peg,
+    scripts_dev,
     templates
 );
 
-gulp.task("default", ["dev", "connect"], function () {
-    livereload.listen({auto: true});
-    gulp.watch(["src/css/vendor*"], ["styles-vendor-dev"]);
-    gulp.watch(conf.peg, ["peg", "scripts-app-dev"]);
-    gulp.watch(["src/js/**"], ["scripts-app-dev", "jshint"]);
-    gulp.watch(["src/css/**"], ["styles-app-dev"]);
-    gulp.watch(conf.templates, ["templates"]);
-    gulp.watch(conf.copy, ["copy"]);
-});
+const prod = gulp.parallel(
+    copy,
+    styles_vendor_prod,
+    styles_app_prod,
+    peg,
+    scripts_prod,
+    templates
+);
+
+exports.dev = dev;
+exports.prod = prod;
+exports.default = function watch() {
+    const opts = { ignoreInitial: false };
+    livereload.listen({ auto: true });
+    gulp.watch(["src/css/vendor*"], opts, styles_vendor_dev);
+    gulp.watch(["src/css/**"], opts, styles_app_dev);
+    gulp.watch(["src/js/**"], opts, scripts_dev);
+    gulp.watch(template_src, opts, templates);
+    gulp.watch(peg_src, opts, peg);
+    gulp.watch(copy_src, opts, copy);
+};
